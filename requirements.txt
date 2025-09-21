@@ -1,0 +1,12 @@
+langchain_huggingface
+langchain_groq 
+langchain_core 
+flask
+groq 
+langchain==0.3.0
+langchain-community==0.3.0
+pygithub==2.4.0
+sentence-transformers==3.1.1
+chromadb==0.5.5
+python-dotenv==1.0.1
+flask_cors 

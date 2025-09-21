@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Repository Analyzer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0d1117;
+            min-height: 100vh;
+            color: #f0f6fc;
+        }
+
+        .container {
+            max-width: 100vw;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        /* GitHub logo */
+        .github-logo {
+            width: 40px;
+            height: 40px;
+            margin-right: 15px;
+            filter: invert(1);
+        }
+
+        /* Initial search page */
+        .search-page {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 80vh;
+            text-align: center;
+        }
+
+        .search-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .search-page h1 {
+            color: #f0f6fc;
+            font-size: 3em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        .search-page p {
+            color: #7d8590;
+            font-size: 18px;
+            margin-bottom: 40px;
+        }
+
+        .input-container {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .input-container input {
+            padding: 15px 25px;
+            font-size: 16px;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            width: 500px;
+            background: #21262d;
+            color: #f0f6fc;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .input-container input:focus {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
+        }
+
+        .analyze-btn {
+            padding: 15px 30px;
+            background: #238636;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .analyze-btn:hover {
+            background: #2ea043;
+            transform: translateY(-2px);
+        }
+
+        /* Main interface */
+        .main-interface {
+            display: none;
+            flex-direction: row;
+            gap: 20px;
+            height: calc(100vh - 40px);
+        }
+
+        /* Left panel - Functions */
+        .left-panel {
+            width: 280px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            overflow-y: auto;
+            max-height: 100%;
+        }
+
+        /* Right panel - Questions */
+        .right-panel {
+            width: 280px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            overflow-y: auto;
+            max-height: 100%;
+        }
+
+        .panel-title {
+            padding: 16px;
+            background: #21262d;
+            color: #f0f6fc;
+            font-size: 14px;
+            font-weight: 600;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            align-items: center;
+        }
+
+        .functionalities, .questions-list {
+            padding: 12px;
+        }
+
+        .functionality-item, .question-item {
+            margin-bottom: 6px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #21262d;
+            transition: all 0.3s ease;
+        }
+
+        .functionality-item:hover, .question-item:hover {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.3);
+        }
+
+        .functionality-header, .question-header {
+            padding: 10px 12px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #f0f6fc;
+            font-weight: 500;
+            font-size: 13px;
+        }
+
+        .functionality-header:hover, .question-header:hover {
+            background: #30363d;
+        }
+
+        .functionality-description, .question-answer {
+            padding: 10px 12px;
+            display: none;
+            background: #161b22;
+            color: #7d8590;
+            font-size: 12px;
+            line-height: 1.4;
+            border-top: 1px solid #30363d;
+        }
+
+        .functionality-description.show, .question-answer.show {
+            display: block;
+        }
+
+        .arrow {
+            font-size: 10px;
+            transition: transform 0.3s ease;
+            color: #7d8590;
+        }
+
+        .arrow.rotated {
+            transform: rotate(90deg);
+        }
+
+        /* Center panel - Expanded */
+        .center-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            min-width: 0; /* Allow shrinking */
+        }
+
+        .summary-container {
+            flex: 1;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .repo-header {
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .repo-title {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .repo-header h2 {
+            color: #58a6ff;
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .repo-stats {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .stat-badge {
+            padding: 4px 8px;
+            background: #21262d;
+            color: #f0f6fc;
+            border: 1px solid #30363d;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .repo-description {
+            color: #7d8590;
+            font-style: italic;
+            margin-top: 8px;
+        }
+
+        .summary-content {
+            line-height: 1.6;
+            color: #f0f6fc;
+        }
+
+        /* Enhanced response formatting */
+        .response-content {
+            line-height: 1.7;
+            color: #f0f6fc;
+        }
+
+        .response-content h3 {
+            color: #58a6ff;
+            margin: 20px 0 10px 0;
+            font-size: 18px;
+        }
+
+        .response-content ul {
+            margin: 15px 0;
+            padding-left: 20px;
+        }
+
+        .response-content li {
+            margin: 8px 0;
+            color: #e6edf3;
+        }
+
+        .response-content strong {
+            color: #58a6ff;
+            font-weight: 600;
+        }
+
+        .response-content code {
+            background: #21262d;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #79c0ff;
+            font-family: 'Courier New', monospace;
+        }
+
+        .response-content em {
+            color: #7ee787;
+            font-style: italic;
+        }
+
+        /* Chat container - Taller */
+        .chat-container {
+            height: 400px; /* Increased from 300px */
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 16px 20px;
+            background: #21262d;
+            color: #f0f6fc;
+            font-weight: 600;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            background: #0d1117;
+        }
+
+        .message {
+            margin-bottom: 12px;
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            word-wrap: break-word;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .user-message {
+            background: #238636;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .bot-message {
+            background: #21262d;
+            color: #f0f6fc;
+            border: 1px solid #30363d;
+            margin-right: auto;
+        }
+
+        .chat-input-container {
+            padding: 16px;
+            background: #21262d;
+            display: flex;
+            gap: 8px;
+            border-top: 1px solid #30363d;
+        }
+
+        .chat-input-container input {
+            flex: 1;
+            padding: 12px 16px; /* Increased padding for taller input */
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            outline: none;
+            font-size: 14px;
+            background: #0d1117;
+            color: #f0f6fc;
+            min-height: 44px; /* Taller input */
+        }
+
+        .chat-input-container input:focus {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.3);
+        }
+
+        .send-btn {
+            padding: 12px 20px;
+            background: #238636;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            min-height: 44px; /* Match input height */
+        }
+
+        .send-btn:hover {
+            background: #2ea043;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #7d8590;
+        }
+
+        .error {
+            background: rgba(248, 81, 73, 0.1);
+            color: #f85149;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid rgba(248, 81, 73, 0.3);
+            margin: 20px 0;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            border: 2px solid #30363d;
+            border-top: 2px solid #58a6ff;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        .emoji {
+            margin-right: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Search Page -->
+        <div class="search-page" id="searchPage">
+            <div class="search-header">
+                <svg class="github-logo" viewBox="0 0 24 24" fill="white">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                <h1>Repository Explorer</h1>
+            </div>
+            <p>Enter a GitHub repository URL to analyze its structure and functionality</p>
+            <div class="input-container">
+                <input type="text" id="repoInput" placeholder="https://github.com/username/repository" />
+                <button class="analyze-btn" onclick="analyzeRepository()">Analyze</button>
+            </div>
+        </div>
+
+        <!-- Main Interface -->
+        <div class="main-interface" id="mainInterface">
+            <!-- Left Panel - Functions -->
+            <div class="left-panel">
+                <div class="panel-title">
+                    <span class="emoji">⚙️</span>
+                    Functions
+                </div>
+                <div class="functionalities" id="functionalities">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center Panel -->
+            <div class="center-panel">
+                <!-- Summary Container -->
+                <div class="summary-container" id="summaryContainer">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Analyzing repository...</p>
+                    </div>
+                </div>
+
+                <!-- Chat Container -->
+                <div class="chat-container">
+                    <div class="chat-header">
+                        <span class="emoji">💬</span>
+                        Ask Questions About This Repository
+                    </div>
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="bot-message message">
+                            Hello! I'm ready to answer questions about this repository. What would you like to know?
+                        </div>
+                    </div>
+                    <div class="chat-input-container">
+                        <input type="text" id="chatInput" placeholder="Ask anything about the repository..." onkeypress="handleChatKeyPress(event)" />
+                        <button class="send-btn" onclick="sendMessage()">Send</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel - Questions -->
+            <div class="right-panel">
+                <div class="panel-title">
+                    <span class="emoji">❓</span>
+                    Questions Asked
+                </div>
+                <div class="questions-list" id="questionsList">
+                    <div style="text-align: center; padding: 20px; color: #7d8590; font-size: 12px;">
+                        No questions asked yet
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentRepo = null;
+        let chatHistory = [];
+        let questionsHistory = [];
+
+        async function analyzeRepository() {
+            const repoUrl = document.getElementById('repoInput').value.trim();
+            if (!repoUrl) {
+                alert('Please enter a repository URL');
+                return;
+            }
+
+            // Switch to main interface
+            document.getElementById('searchPage').style.display = 'none';
+            document.getElementById('mainInterface').style.display = 'flex';
+
+            try {
+                // Get functionalities
+                await loadFunctionalities(repoUrl);
+                
+                // Get summary
+                await loadSummary(repoUrl);
+
+                currentRepo = repoUrl;
+            } catch (error) {
+                showError('Failed to analyze repository: ' + error.message);
+            }
+        }
+
+        async function loadFunctionalities(repoUrl) {
+            try {
+                const response = await fetch('/api/get_functionalities', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo_url: repoUrl })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayFunctionalities(data.functionalities);
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                document.getElementById('functionalities').innerHTML = `
+                    <div class="error">Failed to load functionalities: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function loadSummary(repoUrl) {
+            try {
+                const response = await fetch('/api/get_summary', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo_url: repoUrl })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    displaySummary(data.summary, data.metadata);
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                document.getElementById('summaryContainer').innerHTML = `
+                    <div class="error">Failed to load summary: ${error.message}</div>
+                `;
+            }
+        }
+
+        function displayFunctionalities(functionalities) {
+            const container = document.getElementById('functionalities');
+            container.innerHTML = functionalities.map((func, index) => `
+                <div class="functionality-item">
+                    <div class="functionality-header" onclick="toggleFunctionality(${index}, '${func.name}')">
+                        <span>${func.name}</span>
+                        <span class="arrow" id="arrow-${index}">▶</span>
+                    </div>
+                    <div class="functionality-description" id="desc-${index}">
+                        ${func.description}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function toggleFunctionality(index, funcName) {
+            const desc = document.getElementById(`desc-${index}`);
+            const arrow = document.getElementById(`arrow-${index}`);
+            
+            if (desc.classList.contains('show')) {
+                desc.classList.remove('show');
+                arrow.classList.remove('rotated');
+            } else {
+                // Load detailed explanation if not already loaded
+                if (desc.innerHTML === funcName || desc.innerHTML.includes('Loading...')) {
+                    desc.innerHTML = 'Loading...';
+                    try {
+                        const response = await fetch('/api/explain_functionality', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                repo_url: currentRepo,
+                                functionality_name: funcName
+                            })
+                        });
+
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            desc.innerHTML = data.explanation;
+                        } else {
+                            desc.innerHTML = 'Failed to load explanation: ' + data.error;
+                        }
+                    } catch (error) {
+                        desc.innerHTML = 'Error loading explanation';
+                    }
+                }
+                
+                desc.classList.add('show');
+                arrow.classList.add('rotated');
+            }
+        }
+
+        function displaySummary(summary, metadata) {
+            const container = document.getElementById('summaryContainer');
+            container.innerHTML = `
+                <div class="repo-header">
+                    <div class="repo-title">
+                        <h2>${metadata.name}</h2>
+                    </div>
+                    <div class="repo-stats">
+                        <span class="stat-badge"><span class="emoji">⭐</span>${metadata.stars}</span>
+                        <span class="stat-badge"><span class="emoji">🍴</span>${metadata.forks}</span>
+                        <span class="stat-badge"><span class="emoji">🐛</span>${metadata.issues}</span>
+                        <span class="stat-badge"><span class="emoji">📅</span>${metadata.last_updated}</span>
+                        <span class="stat-badge"><span class="emoji">💻</span>${metadata.language}</span>
+                    </div>
+                    <div class="repo-description">${metadata.description}</div>
+                </div>
+                <div class="summary-content">
+                    ${formatResponse(summary)}
+                </div>
+            `;
+        }
+
+        function formatResponse(text) {
+            // Enhanced response formatting
+            let formatted = text
+                // Convert **bold** to <strong>
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                // Convert *italic* to <em>
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                // Convert `code` to <code>
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                // Convert line breaks
+                .replace(/\n/g, '<br>')
+                // Format numbered lists
+                .replace(/(\d+\.\s[^<\n]+)/g, '<div style="margin: 8px 0; padding-left: 15px;">$1</div>')
+                // Highlight key phrases
+                .replace(/(What it does:|Key Features:|Purpose:|Technologies:|Architecture:)/g, '<h3>$1</h3>')
+                // Format bullet points (if any)
+                .replace(/^[-•]\s(.+)/gm, '<div style="margin: 5px 0; padding-left: 20px;">• $1</div>');
+                
+            return `<div class="response-content">${formatted}</div>`;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message || !currentRepo) return;
+
+            // Add to questions history
+            questionsHistory.push({
+                question: message,
+                answer: '',
+                timestamp: new Date()
+            });
+
+            addMessage(message, 'user');
+            input.value = '';
+
+            const loadingId = addMessage('Thinking...', 'bot');
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        repo_url: currentRepo,
+                        question: message,
+                        chat_history: chatHistory
+                    })
+                });
+
+                const data = await response.json();
+                
+                document.getElementById(loadingId).remove();
+                
+                if (data.success) {
+                    const formattedResponse = formatResponse(data.response);
+                    addMessage(formattedResponse, 'bot');
+                    chatHistory.push({ user: message, bot: data.response });
+                    
+                    // Update questions history with answer
+                    questionsHistory[questionsHistory.length - 1].answer = data.response;
+                    updateQuestionsPanel();
+                } else {
+                    addMessage('Sorry, I encountered an error: ' + data.error, 'bot');
+                }
+            } catch (error) {
+                document.getElementById(loadingId).remove();
+                addMessage('Sorry, I encountered an error processing your question.', 'bot');
+            }
+        }
+
+        function updateQuestionsPanel() {
+            const container = document.getElementById('questionsList');
+            
+            if (questionsHistory.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #7d8590; font-size: 12px;">No questions asked yet</div>';
+                return;
+            }
+
+            container.innerHTML = questionsHistory.map((item, index) => `
+                <div class="question-item">
+                    <div class="question-header" onclick="toggleQuestion(${index})">
+                        <span>${item.question.length > 40 ? item.question.substring(0, 40) + '...' : item.question}</span>
+                        <span class="arrow" id="q-arrow-${index}">▶</span>
+                    </div>
+                    <div class="question-answer" id="q-answer-${index}">
+                        ${formatResponse(item.answer)}
+                    </div>
+                </div>
+            `).reverse().join(''); // Show latest questions first
+        }
+
+        function toggleQuestion(index) {
+            const answer = document.getElementById(`q-answer-${index}`);
+            const arrow = document.getElementById(`q-arrow-${index}`);
+            
+            if (answer.classList.contains('show')) {
+                answer.classList.remove('show');
+                arrow.classList.remove('rotated');
+            } else {
+                answer.classList.add('show');
+                arrow.classList.add('rotated');
+            }
+        }
+
+        function addMessage(text, sender) {
+            const messagesContainer = document.getElementById('chatMessages');
+            const messageId = 'msg-' + Date.now();
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.id = messageId;
+            messageDiv.className = `message ${sender}-message`;
+            
+            if (sender === 'bot' && text.includes('<')) {
+                messageDiv.innerHTML = text;
+            } else {
+                messageDiv.textContent = text;
+            }
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            return messageId;
+        }
+
+        function handleChatKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('summaryContainer').innerHTML = `
+                <div class="error">${message}</div>
+            `;
+        }
+    </script>
+</body>
+</html>
