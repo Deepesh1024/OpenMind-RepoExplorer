@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from typing import List, Dict
@@ -13,7 +14,10 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.runnables import RunnablePassthrough
 from github import Github, RateLimitExceededException
-import time
+import threading
+import concurrent.futures
+from multiprocessing import Pool, cpu_count
+import numpy as np
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -21,11 +25,114 @@ app = Flask(__name__)
 CORS(app)
 load_dotenv()
 
+def smart_file_filter(file_path: str) -> bool:
+    """Filter files based on path and extension only"""
+    # Skip common non-essential directories
+    skip_patterns = [
+        'node_modules/', 'dist/', 'build/', '.git/', 'vendor/', '__pycache__/', 
+        '.pytest_cache/', 'coverage/', 'logs/', 'tmp/', 'temp/', '.vscode/',
+        '.idea/', 'target/', 'out/', 'bin/'
+    ]
+    
+    if any(pattern in file_path for pattern in skip_patterns):
+        return False
+    
+    # Priority file extensions for code analysis
+    priority_extensions = {
+        '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.h',
+        '.md', '.rst', '.txt', '.json', '.yml', '.yaml', '.toml', '.ini',
+        '.html', '.css', '.scss', '.vue', '.php', '.rb', '.go', '.rs',
+        '.sh', '.bat', '.sql', '.xml', '.dockerfile', '.gradle', '.maven'
+    }
+    
+    # Check if file has a priority extension
+    return any(file_path.lower().endswith(ext) for ext in priority_extensions)
+
+class ParallelChunkProcessor:
+    def __init__(self):
+        self.embedding_model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2", 
+            model_kwargs={'device': 'cpu'}
+        )
+
+    def parallel_chunk_generation(self, documents: List, max_workers: int = None):
+        """Generate chunks using multiple processes for CPU-intensive splitting"""
+        if not max_workers:
+            max_workers = min(cpu_count() - 1, 8)
+        
+        if len(documents) < max_workers:
+            # For small document sets, use single process
+            return self.process_document_batch(documents)
+        
+        batch_size = max(1, len(documents) // max_workers)
+        document_batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
+        
+        with Pool(processes=max_workers) as pool:
+            chunk_results = pool.map(self.process_document_batch, document_batches)
+        
+        all_chunks = []
+        for chunk_batch in chunk_results:
+            all_chunks.extend(chunk_batch)
+        
+        return all_chunks
+
+    def process_document_batch(self, doc_batch: List):
+        """Process a batch of documents in a single process"""
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, 
+            chunk_overlap=200
+        )
+        
+        chunks = []
+        for doc in doc_batch:
+            try:
+                doc_chunks = text_splitter.split_documents([doc])
+                chunks.extend(doc_chunks)
+            except Exception as e:
+                print(f"Error processing document: {e}")
+                continue
+        
+        return chunks
+
+    def parallel_embedding_creation(self, chunks: List, batch_size: int = 32):
+        """Create embeddings using threading for I/O bound embedding calls"""
+        
+        def create_embeddings_batch(chunk_batch):
+            """Create embeddings for a batch of chunks"""
+            try:
+                texts = [chunk.page_content for chunk in chunk_batch]
+                embeddings = self.embedding_model.embed_documents(texts)
+                return list(zip(chunk_batch, embeddings))
+            except Exception as e:
+                print(f"Error creating embeddings for batch: {e}")
+                return []
+        
+        chunk_batches = [chunks[i:i + batch_size] for i in range(0, len(chunks), batch_size)]
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_batch = {
+                executor.submit(create_embeddings_batch, batch): batch 
+                for batch in chunk_batches
+            }
+            
+            all_embeddings = []
+            for future in concurrent.futures.as_completed(future_to_batch):
+                try:
+                    batch_results = future.result()
+                    all_embeddings.extend(batch_results)
+                    print(f"Processed batch of {len(batch_results)} embeddings")
+                except Exception as e:
+                    print(f"Embedding batch failed: {e}")
+        
+        return all_embeddings
+
 class RepositoryAnalyzer:
     def __init__(self):
         self.github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
         self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.vector_stores = {}  # Cache for repositories
+        self.vector_stores = {}
+        self.chunk_processor = ParallelChunkProcessor()
+        self.processing_cache = {}
 
     def setup_github_client(self):
         if not self.github_token:
@@ -34,10 +141,8 @@ class RepositoryAnalyzer:
         g = Github(self.github_token)
         rate_limit = g.get_rate_limit()
         core_rate_limit = rate_limit.core
-        remaining = core_rate_limit.remaining
-        limit = core_rate_limit.limit
         
-        return g, {"remaining": remaining, "limit": limit}
+        return g, {"remaining": core_rate_limit.remaining, "limit": core_rate_limit.limit}
 
     def fetch_repo_metadata(self, repo_url: str) -> Dict:
         g, rate_info = self.setup_github_client()
@@ -61,6 +166,7 @@ class RepositoryAnalyzer:
             return {"error": f"Error fetching repository metadata: {str(e)}"}
 
     def load_repo_files(self, repo_url: str, branch: str = None) -> List:
+        """Load repository files with proper error handling"""
         repo_name = repo_url.split("github.com/")[-1]
         
         try:
@@ -68,33 +174,88 @@ class RepositoryAnalyzer:
             repo = g.get_repo(repo_name)
             branch = branch or repo.default_branch
             
+            # Create loader with corrected file_filter signature
             loader = GithubFileLoader(
                 repo=repo_name,
                 branch=branch,
                 access_token=self.github_token,
-                file_filter=lambda x: x.endswith((".py", ".js", ".ts", ".jsx", ".tsx", ".md", ".html", ".css", ".json", ".vue", ".scss", ".sass", ".xml"))
+                github_api_url="https://api.github.com",
+                file_filter=smart_file_filter  # This expects just the file path string
             )
             
+            print(f"Loading files from {repo_name} on branch {branch}...")
             documents = loader.load()
+            
+            # Fallback to master branch if main branch has no documents
             if not documents and branch != "master":
+                print(f"No documents found on {branch}, trying master branch...")
                 return self.load_repo_files(repo_url, branch="master")
             
+            print(f"Successfully loaded {len(documents)} documents")
             return documents
+            
         except RateLimitExceededException:
             raise Exception("GitHub API rate limit exceeded")
         except Exception as e:
             raise Exception(f"Error loading repository files: {str(e)}")
 
-    def create_vector_store(self, documents):
+    def create_vector_store_optimized(self, documents):
+        """Optimized vector store creation with parallel processing using correct FAISS methods"""
         try:
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-            chunks = text_splitter.split_documents(documents)
-            embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-            vector_store = FAISS.from_documents(chunks, embeddings)
+            if not documents:
+                raise Exception("No documents to process")
+            
+            print(f"Processing {len(documents)} documents...")
+            
+            # Step 1: Parallel chunk generation (CPU-intensive)
+            start_time = time.time()
+            chunks = self.chunk_processor.parallel_chunk_generation(documents)
+            chunk_time = time.time() - start_time
+            print(f"Chunking completed in {chunk_time:.2f}s - Generated {len(chunks)} chunks")
+            
+            if not chunks:
+                raise Exception("No chunks generated from documents")
+            
+            # Step 2: Use FAISS.from_documents() - the correct method
+            start_time = time.time()
+            vector_store = self.create_vector_store_from_chunks(chunks)
+            store_time = time.time() - start_time
+            print(f"Vector store created in {store_time:.2f}s")
+            
+            total_time = chunk_time + store_time
+            print(f"Total processing time: {total_time:.2f}s")
             
             return vector_store, len(chunks)
+            
         except Exception as e:
-            raise Exception(f"Error creating FAISS vector store: {str(e)}")
+            raise Exception(f"Error in optimized vector store creation: {str(e)}")
+
+    def create_vector_store_from_chunks(self, chunks: List):
+        """Create vector store using the correct FAISS.from_documents method"""
+        try:
+            # Use the standard from_documents method which handles embedding internally
+            vector_store = FAISS.from_documents(
+                documents=chunks,
+                embedding=self.chunk_processor.embedding_model
+            )
+            return vector_store
+            
+        except Exception as e:
+            # Fallback: use from_texts if from_documents fails
+            try:
+                print("Fallback: Using from_texts method...")
+                texts = [chunk.page_content for chunk in chunks]
+                metadatas = [chunk.metadata for chunk in chunks]
+                
+                vector_store = FAISS.from_texts(
+                    texts=texts,
+                    embedding=self.chunk_processor.embedding_model,
+                    metadatas=metadatas
+                )
+                return vector_store
+                
+            except Exception as e2:
+                raise Exception(f"Both from_documents and from_texts failed. from_documents error: {e}, from_texts error: {e2}")
 
     def setup_llm(self):
         if not self.groq_api_key:
@@ -118,7 +279,7 @@ class RepositoryAnalyzer:
                 if not documents:
                     return {"success": False, "error": "No relevant files found"}
                 
-                vector_store, chunk_count = self.create_vector_store(documents)
+                vector_store, chunk_count = self.create_vector_store_optimized(documents)
                 self.vector_stores[repo_url] = vector_store
             else:
                 vector_store = self.vector_stores[repo_url]
@@ -186,7 +347,7 @@ class RepositoryAnalyzer:
                 if not documents:
                     return {"success": False, "error": "No relevant files found"}
                 
-                vector_store, chunk_count = self.create_vector_store(documents)
+                vector_store, chunk_count = self.create_vector_store_optimized(documents)
                 self.vector_stores[repo_url] = vector_store
             else:
                 vector_store = self.vector_stores[repo_url]
